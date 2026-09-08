@@ -1,66 +1,36 @@
 use std::fs;
 use std::range::Range;
 
-fn cartesian2d<T>(xr: Range<T>, yr: Range<T>) -> Vec<Vec<T>>
-where
-    Range<T>: IntoIterator<Item = T>,
-    T: Copy,
-{
-    let mut result = Vec::new();
-    for y in yr {
-        for x in xr {
-            result.push(vec![x, y]);
-        }
-    }
-    result
-}
+use num_traits::PrimInt;
 
-fn cartesian3d<T>(xr: Range<T>, yr: Range<T>, zr: Range<T>) -> Vec<Vec<T>>
+const SIDE: usize = 5;
+
+fn cartesian<T>(ranges: &[Range<T>]) -> Vec<Vec<T>>
 where
     Range<T>: IntoIterator<Item = T>,
-    T: Copy,
+    T: PrimInt,
 {
     let mut result = Vec::new();
-    for z in zr {
-        for y in yr {
-            for x in xr {
-                result.push(vec![x, y, z]);
+    let mut values = ranges.iter().map(|r| r.start).collect::<Vec<_>>();
+    loop {
+        result.push(values.clone());
+        let mut j = values.len() - 1;
+        loop {
+            values[j] = values[j] + T::one();
+            if values[j] < ranges[j].end {
+                break;
             }
-        }
-    }
-    result
-}
-
-fn cartesian4d<T>(xr: Range<T>, yr: Range<T>, zr: Range<T>, tr: Range<T>) -> Vec<Vec<T>>
-where
-    Range<T>: IntoIterator<Item = T>,
-    T: Copy,
-{
-    let mut result = Vec::new();
-    for t in tr {
-        for z in zr {
-            for y in yr {
-                for x in xr {
-                    result.push(vec![x, y, z, t]);
-                }
+            if j == 0 {
+                return result;
             }
+            values[j] = ranges[j].start;
+            j -= 1;
         }
     }
-    result
 }
 
-fn make_lines(dim: u8) -> Vec<Vec<Vec<usize>>> {
-    let directions = match dim {
-        2 => cartesian2d(Range::from(-1..2), Range::from(-1..2)),
-        3 => cartesian3d(Range::from(-1..2), Range::from(-1..2), Range::from(-1..2)),
-        4 => cartesian4d(
-            Range::from(-1..2),
-            Range::from(-1..2),
-            Range::from(-1..2),
-            Range::from(-1..2),
-        ),
-        _ => unreachable!(),
-    };
+fn make_lines(dim: usize) -> Vec<Vec<Vec<usize>>> {
+    let directions = cartesian(&vec![Range::from(-1..2); dim]);
 
     let mut result = Vec::new();
 
@@ -80,23 +50,18 @@ fn make_lines(dim: u8) -> Vec<Vec<Vec<usize>>> {
         let ranges: Vec<Range<usize>> = dir
             .iter()
             .map(|c| match c {
-                -1 => Range::from(4..5),
-                0 => Range::from(0..5),
+                -1 => Range::from(SIDE - 1..SIDE),
+                0 => Range::from(0..SIDE),
                 1 => Range::from(0..1),
                 _ => unreachable!(),
             })
             .collect::<Vec<_>>();
 
-        let starting_coordinates = match dim {
-            2 => cartesian2d(ranges[0], ranges[1]),
-            3 => cartesian3d(ranges[0], ranges[1], ranges[2]),
-            4 => cartesian4d(ranges[0], ranges[1], ranges[2], ranges[3]),
-            _ => unreachable!(),
-        };
-
-        for sc in starting_coordinates {
+        // for each possible starting coordinate, perform vector addition to
+        // obtain all lines
+        for sc in cartesian(&ranges) {
             let mut line = Vec::new();
-            for n in 0..5 {
+            for n in 0..SIDE as isize {
                 line.push(
                     sc.iter()
                         .zip(dir.iter())
@@ -120,137 +85,50 @@ fn main() {
         .map(|n| n.parse::<i64>().unwrap())
         .collect::<Vec<_>>();
     let orig_cards = cards
-        .lines()
-        .map(|c| {
-            c.split_whitespace()
-                .map(|n| n.parse::<i64>().unwrap())
-                .collect::<Vec<_>>()
-                .chunks_exact(5)
-                .map(|chunk| chunk.to_vec())
-                .collect::<Vec<_>>()
-        })
+        .split_ascii_whitespace()
+        .map(|n| n.parse::<i64>().unwrap())
         .collect::<Vec<_>>();
 
-    // part 1
-    let mut cards = orig_cards.clone();
-    let lines2d = make_lines(2);
-    for n in &numbers {
-        for card in &mut cards {
-            for row in card {
-                for v in row {
-                    if v == n {
-                        *v = i64::MAX;
-                    }
+    for dim in 2..=4 {
+        let mut cards = orig_cards.clone();
+        let lines = make_lines(dim as usize);
+        for n in &numbers {
+            // cross out numbers
+            for v in &mut cards {
+                if v == n {
+                    *v = i64::MAX;
                 }
             }
-        }
 
-        let mut bingos = 0;
-        for card in &cards {
-            for line in &lines2d {
-                let mut found = true;
-                for coord in line {
-                    if card[coord[0]][coord[1]] != i64::MAX {
-                        found = false;
-                        break;
-                    }
-                }
-                if found {
-                    bingos += 1;
-                }
-            }
-        }
-
-        if bingos >= 5 {
-            println!("{n}");
-            break;
-        }
-    }
-
-    // part 2
-    let mut cards = orig_cards
-        .chunks_exact(5)
-        .map(|chunk| chunk.to_vec())
-        .collect::<Vec<_>>();
-    let lines3d = make_lines(3);
-    for n in &numbers {
-        for card in &mut cards {
-            for slice in card {
-                for row in slice {
-                    for v in row {
-                        if v == n {
-                            *v = i64::MAX;
+            // count bingos
+            let n_objects = cards.len() / SIDE.pow(dim);
+            let mut bingos = 0;
+            for object in 0..n_objects {
+                for line in &lines {
+                    let mut found = true;
+                    for coord in line {
+                        let mut idx = 0;
+                        let mut factor = 1;
+                        for c in coord {
+                            idx += c * factor;
+                            factor *= SIDE;
+                        }
+                        idx += object * factor;
+                        if cards[idx] != i64::MAX {
+                            found = false;
+                            break;
                         }
                     }
-                }
-            }
-        }
-
-        let mut bingos = 0;
-        for card in &cards {
-            for line in &lines3d {
-                let mut found = true;
-                for coord in line {
-                    if card[coord[0]][coord[1]][coord[2]] != i64::MAX {
-                        found = false;
-                        break;
-                    }
-                }
-                if found {
-                    bingos += 1;
-                }
-            }
-        }
-
-        if bingos >= 5 {
-            println!("{n}");
-            break;
-        }
-    }
-
-    // part 3
-    let mut cards = orig_cards
-        .chunks_exact(5)
-        .map(|chunk| chunk.to_vec())
-        .collect::<Vec<_>>()
-        .chunks_exact(5)
-        .map(|chunk| chunk.to_vec())
-        .collect::<Vec<_>>();
-    let lines4d = make_lines(4);
-    for n in &numbers {
-        for card in &mut cards {
-            for cube in card {
-                for slice in cube {
-                    for row in slice {
-                        for v in row {
-                            if v == n {
-                                *v = i64::MAX;
-                            }
-                        }
+                    if found {
+                        bingos += 1;
                     }
                 }
             }
-        }
 
-        let mut bingos = 0;
-        for card in &cards {
-            for line in &lines4d {
-                let mut found = true;
-                for coord in line {
-                    if card[coord[0]][coord[1]][coord[2]][coord[3]] != i64::MAX {
-                        found = false;
-                        break;
-                    }
-                }
-                if found {
-                    bingos += 1;
-                }
+            if bingos >= 5 {
+                println!("{n}");
+                break;
             }
-        }
-
-        if bingos >= 5 {
-            println!("{n}");
-            break;
         }
     }
 }
